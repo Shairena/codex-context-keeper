@@ -1,0 +1,13 @@
+.buildenv/
+build/
+dist/
+data/
+__pycache__/
+*.spec
+review_artifacts/
+bridge/bin/
+bridge/obj/
+.native-build/
+context-keeper-protected-threads.json
+*.dpapi
+*.sqlite*
