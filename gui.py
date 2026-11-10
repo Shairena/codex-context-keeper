@@ -255,15 +255,14 @@ class Application(tk.Tk):
             'Папки чатов изолированы по полному ID. Источники Codex открываются только для чтения.', wraplength=1010).pack(anchor='w', pady=10)
         cb = ttk.Frame(integrations)
         cb.pack(fill='x', pady=8)
-        ttk.Button(cb, text='Разрешить / запретить MCP-запросы выбранному чату', command=lambda: self.guard(self.toggle_compaction)).pack(side='left')
+        ttk.Button(cb, text='Самосжатие: разрешить / запретить запросы чату…', command=lambda: self.guard(self.toggle_compaction)).pack(side='left')
         ttk.Button(cb, text='Очередь сжатия', command=lambda: self.guard(self.show_queue)).pack(side='left', padx=8)
         ttk.Button(cb, text='MCP-конфигурация', command=lambda: self.guard(self.mcp_config)).pack(side='left')
-        ttk.Button(integrations, text='Небезопасный реальный запуск: включить / выключить для чата…',
+        ttk.Button(integrations, text='Удалённое сжатие: разрешить / запретить запуск…',
             command=lambda: self.guard(self.toggle_unsafe)).pack(anchor='w', pady=6)
-        ttk.Label(integrations, text='НЕБЕЗОПАСНО: сжатие может прервать уже начавшийся ответ на новое сообщение.\n'
-            'Новое сообщение во время активного сжатия может быть отклонено. Простое ожидание idle не устраняет гонку.\n'
-            'По умолчанию реальный запуск выключен; нужно отдельное согласие для каждого чата.',
-            foreground='#a00000', wraplength=1010).pack(anchor='w')
+        ttk.Label(integrations, text='Самосжатие и удалённый запуск по умолчанию выключены.\n'
+            'Для выполнения нужны оба разрешения; включаются отдельно для выбранного чата.',
+            wraplength=1010).pack(anchor='w')
         activity = ttk.Frame(self)
         activity.pack(fill='x', padx=12)
         self.progress = ttk.Progressbar(activity, mode='indeterminate', length=150)
@@ -428,8 +427,9 @@ class Application(tk.Tk):
         self.warning_percent.delete(0, 'end')
         self.warning_percent.insert(0, str(row.get('context_warning_percent', 90)))
         self.refresh_live_counter()
-        self.details.set(f"ID: {tid}\nПапка: {self.store.folder(tid)}\nНебезопасное сжатие: " +
-            ('ВКЛЮЧЕНО — новое сообщение может привести к прерыванию ответа.' if row.get('unsafe_native_compaction') else 'выключено.'))
+        self.details.set(f"ID: {tid}\nПапка: {self.store.folder(tid)}\n"
+            f"Самосжатие (запросы): {'включено' if row.get('allow_compaction') else 'выключено'}; "
+            f"удалённый запуск: {'включён' if row.get('unsafe_native_compaction') else 'выключен'}.")
         self.threshold.delete(0, 'end')
         if row.get('preparation_threshold'):
             self.threshold.insert(0, str(row['preparation_threshold']))
@@ -536,17 +536,15 @@ class Application(tk.Tk):
             return
         if not ids:
             return
-        if not messagebox.askyesno('Подключить выбранные чаты — предупреждение',
+        if not messagebox.askyesno('Подключить выбранные чаты',
             f'Подключить выбранные чаты: {len(ids)}?\n'
             'Чаты из списка защиты будут пропущены. Включатся История, Мемо, Заметки, '
-            'Автовозврат, MCP-запросы и НЕБЕЗОПАСНОЕ реальное сжатие.\n\n'
+            'Автовозврат. Самосжатие и удалённое сжатие будут выключены.\n'
             'Также включатся живой счётчик и сообщения-напоминания при 90% (порог можно изменить).\n'
-            'Внешнее сжатие может прервать новый ответ или отклонить сообщение. '
-            'Ожидающие запросы смогут выполняться при следующих обновлениях.\n'
             'Сама кнопка не запускает сжатие и не меняет глобальные лимиты. '
             'Недоступные архивы будут пропущены. Новые чаты потребуют повторного нажатия; '
             'отдельные MCP-привязки не создаются. Не выбранные чаты не меняются.\n\n'
-            'Продолжить со всеми настройками и этим риском?', parent=self):
+            'Продолжить?', parent=self):
             return
         if not configured_hook(self.hook_path.get(), self.hook_command()) and not self.install():
             return
@@ -805,7 +803,7 @@ class Application(tk.Tk):
         tid = self.selected()
         row = self.store.registry()['chats'][tid]
         enabled = row.get('allow_compaction', False)
-        if not enabled and not messagebox.askyesno('MCP-сжатие', 'Разрешить запросы только этому чату?\nРеальный запуск требует отдельного согласия на известный риск.\nУ stdio MCP нет достоверного автоматического caller ID; используется явная привязка.', parent=self):
+        if not enabled and not messagebox.askyesno('Самосжатие', f"Разрешить чату «{row['title']}» запрашивать сжатие?\nДля выполнения также нужно разрешение удалённого запуска.", parent=self):
             return
         self.store.update(tid, allow_compaction=not enabled)
         self.status.set('MCP-запросы разрешены.' if not enabled else 'MCP-запросы запрещены.')
@@ -814,15 +812,12 @@ class Application(tk.Tk):
         tid = self.selected()
         row = self.store.registry()['chats'][tid]
         enabled = row.get('unsafe_native_compaction', False)
-        if not enabled and not messagebox.askyesno('НЕБЕЗОПАСНОЕ сжатие',
-            f"Включить реальное сжатие для чата «{row['title']}»?\n\n"
-            'Подтверждено тестом: если новое сообщение запустит ответ между проверкой idle и командой сжатия, этот ответ может быть прерван. '
-            'Сообщение во время сжатия может быть отклонено.\n\n'
-            'Приложение дождётся завершения исходного ответа и повторно проверит idle, но атомарной защиты НЕТ. Продолжить с этим риском?', parent=self):
+        if not enabled and not messagebox.askyesno('Удалённое сжатие',
+            f"Разрешить внешний запуск сжатия для чата «{row['title']}»?", parent=self):
             return
         self.store.update(tid, unsafe_native_compaction=not enabled)
         self.show_selected()
-        self.status.set('Небезопасный реальный запуск разрешён только этому чату.' if not enabled else 'Реальный запуск выключен.')
+        self.status.set('Удалённый запуск разрешён выбранному чату.' if not enabled else 'Удалённый запуск выключен.')
 
     def show_queue(self):
         from compaction import CompactionQueue
@@ -843,7 +838,7 @@ class Application(tk.Tk):
         name = 'context_keeper_' + tid.replace('-', '_')
         # JSON displayed as data, never writes native config automatically.
         text = ('MCP stdio configuration (JSON example; configure your client explicitly).\n'
-            'Bound ID is not authenticated caller metadata. Real compact requires BOTH request permission and separate known-risk consent for this chat.\n\n' +
+            'Compaction requires BOTH per-chat request and external-launch permissions; both default off.\n\n' +
             json.dumps({'mcpServers': {name: {'command': str(exe), 'args': args}}}, ensure_ascii=False, indent=2) +
             '\n\nCodex config.toml equivalent:\n' + f'[mcp_servers.{name}]\ncommand = ' + json.dumps(str(exe)) + '\nargs = ' + json.dumps(args) + '\n')
         self.text_window('Явная MCP-привязка к выбранному чату', text)

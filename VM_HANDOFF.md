@@ -13,7 +13,7 @@ Use `LINUX.md` and report each acceptance category truthfully.
    through the user's normal admin mechanism, not by changing security settings.
 4. Run `python3 install_linux.py --register-mcp --verify-gui` as the same user as
    Codex. Keep the private config backup and existing archives.
-5. Confirm seven tools/version0.3.7 in the isolated stdio check, then verify those
+5. Confirm seven tools/version0.3.8 in the isolated stdio check, then verify those
    tools are actually callable in this chat after MCP reload. Do not mistake a
    successful separate process for a refreshed active-chat tool binding.
 6. Register only the chat ID explicitly selected by the user. Read its live

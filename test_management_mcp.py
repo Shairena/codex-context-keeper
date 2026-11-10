@@ -239,8 +239,9 @@ class ManagementTests(unittest.TestCase):
             store = Store(data, home)
             row = store.registry()['chats'][tid]
             self.assertTrue(all(row['selected'].values()))
-            for key in ('auto_restore', 'allow_compaction', 'unsafe_native_compaction'):
-                self.assertTrue(row[key])
+            self.assertTrue(row['auto_restore'])
+            for key in ('allow_compaction', 'unsafe_native_compaction'):
+                self.assertFalse(row[key])
             folder = store.folder(tid)
             (folder / 'notes.md').write_text('Preserved notes', encoding='utf-8')
             original = (data / 'registry.json').read_bytes()

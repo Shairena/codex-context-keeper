@@ -134,11 +134,11 @@ class CompactionQueue:
                 if stop is not None and stop.is_set():
                     return  # Normal close cancels new dispatch, not an already sent native operation.
                 if not row.get('allow_compaction') or not row.get('unsafe_native_compaction'):
-                    current.update(status='deferred', updated=now(), detail='Небезопасный реальный запуск не разрешён; ничего не отправлено.')
+                    current.update(status='deferred', updated=now(), detail='Удалённый запуск выключен; ничего не отправлено.')
                     write_json(self.path, state)
                     return
                 current.update(status='dispatching', updated=now(), owner_id=before['ownerId'],
-                    known_race_unsafe=True, detail='НЕБЕЗОПАСНО: новое сообщение может прервать ответ в гонке. Намерение записано до RPC; ACK не завершение.')
+                    known_race_unsafe=True, detail='Намерение записано до RPC; ожидается подтверждение завершения.')
                 write_json(self.path, state)
             result = self.driver.run_native(tid, item['origin_turn_id'], before['ownerId'])
             disposition = result.get('disposition')
@@ -147,7 +147,7 @@ class CompactionQueue:
             elif disposition == 'completed' and result.get('threadId') == tid and result.get('ownerId') == before['ownerId']:
                 # Native completion committed BEFORE optional archive refresh; a disk error must not cause a resend.
                 self._transition(rid, {'dispatching'}, status='completed', native_result=result,
-                    detail='Сжатие завершено по новому item/turn и idle. Риск прерывания нового ответа сохраняется.')
+                    detail='Сжатие завершено по новому item/turn и свободному состоянию чата.')
                 try:
                     self.store.sync(tid)
                 except Exception as exc:
@@ -182,7 +182,7 @@ class CompactionQueue:
             if getattr(self.driver, 'unsafe_driver', False):
                 if not row.get('unsafe_native_compaction'):
                     self._transition(rid, {'queued', 'deferred', 'waiting'}, status='deferred',
-                        detail='Реальное небезопасное сжатие выключено. Включите отдельное согласие для этого чата.')
+                        detail='Удалённый запуск выключен для этого чата.')
                 else:
                     self._native_tick(rid, item)
                 continue

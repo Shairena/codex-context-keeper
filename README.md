@@ -12,10 +12,9 @@ MIT-only**. Preserve both license files and the runtime notices in `licenses/`.
 
 ## Run
 
-Version 0.3.7 adds live context counters and idle reminders, compressed transcript
-support, project-grouped chat selection and crash-safe archive locking. Native
-compaction remains explicitly unsafe and separately consented; context reminders
-do not request compaction.
+Version 0.3.8 keeps self-request and external-launch compaction permissions off
+on every connection and uses neutral per-chat controls. Live counters, context
+reminders, compressed transcripts and memo restoration remain available.
 Run `ContextKeeper.exe` from the extracted release (or `dist/ContextKeeper.exe`
 after a source build). Keep `ContextKeeperHook.exe` and
 `ContextKeeperBridge.exe` beside it, with `REFERENCE-LICENSE.txt`.
@@ -154,13 +153,13 @@ hook configuration was edited during development.
 ## Management MCP
 
 `ContextKeeperHook.exe --mcp-management --data <installed-data> --codex-home <home>`
-exposes five stdio tools: `list_available_chats`, `list_connected_chats`,
-`connect_chats(thread_ids)`, `disconnect_chats(thread_ids)` and
-`organize_archives()`. This is explicit
+exposes seven stdio tools: `list_available_chats`, `list_connected_chats`,
+`connect_chats(thread_ids)`, `disconnect_chats(thread_ids)`, `organize_archives()`,
+`get_context_status(thread_id)` and `configure_context_warnings(...)`. This is explicit
 local administration, without authenticated per-chat caller identity. Configure
 it only for trusted clients. Lists contain metadata, not transcript contents.
-Connection uses the same archive/registration code as the GUI and enables all
-per-chat switches by default, including unsafe compaction consent. This process
+Connection uses the same archive/registration code as the GUI and enables
+preservation/reminder switches by default; both compaction permissions stay off. This process
 does not create a compaction queue/worker or install/trust hooks. Another GUI or
 compaction worker may later dispatch existing requests after connection consent.
 Disconnect requires explicit IDs, backs up the registry and preserves original
@@ -206,88 +205,43 @@ Configuration is not proof of connection in an already-open chat. Verify the
 actual tool inventory after the client's supported MCP reload/reconnect.
 Official setup: https://learn.chatgpt.com/docs/extend/mcp (accessed 2026-11-01).
 
-## MCP after-turn compaction — KNOWN UNSAFE, separate opt-in
+## Optional after-turn compaction
 
-The app exposes a small stdio MCP server via `ContextKeeperHook.exe --mcp
---bound-thread UUID --data PATH --codex-home PATH`. The **MCP-конфигурация** button
-shows JSON and Codex TOML examples; it does not write native client config.
-Explicitly permit requests for that registered chat first. Configure the server
-only for the intended chat/client use. Stdio MCP does not authenticate an actual
-chat caller; the fixed server binding and validated source turn are explicit
-limitations, not automatic identity proof.
+Self-request and external-launch permissions are both off by default. Connecting
+or reconnecting through either GUI or management MCP applies those off defaults.
+Preservation, auto-restore and context reminders are enabled separately.
 
-- `request_compaction_after_turn(origin_turn_id)` returns a durable request ID
-  and queued status without compacting or interrupting the turn. Origin turn
-  must exist in the bound thread's available original source metadata.
-- `get_compaction_request(request_id)` reports status.
+In **Восстановление после сжатия**, **Самосжатие** permits requests from the
+selected chat and **Удалённое сжатие** permits external execution. Both gates are
+required to perform compaction. Enabling either uses a simple per-chat confirmation.
+The stored fields `allow_compaction` and `unsafe_native_compaction` retain their
+legacy names for compatibility. Starting the app alone does not erase existing
+explicit permissions; operators can disable them in the GUI.
+
+A bound server runs with `--mcp --bound-thread UUID --data PATH --codex-home PATH`.
+The configuration button shows examples without changing the client's config.
+Stdio binding is explicit; it does not authenticate the actual chat caller.
+
+- `request_compaction_after_turn(origin_turn_id)` queues the request immediately;
+  execution waits for the completed originating turn and live idle. The
+  originating turn must exist in that bound chat's source.
+- `get_compaction_request(request_id)` reports durable state.
 - `cancel_compaction_request(request_id)` cancels before dispatch.
 
-**Confirmed risk:** native compact can interrupt a newly started user answer if
-input arrives between an external idle check and compact RPC. Native input
-during an actual compact was explicitly rejected with ActiveTurnNotSteerable.
-These findings remain valid; user explicitly requested connection despite this
-risk. This is NOT an atomic or safe driver.
+The worker rechecks permissions, owner, originating completion and idle before
+submitting. Native completion requires a new completed item/turn and idle; ACK
+alone is not completion. Ambiguous possible submission is never automatically
+retried. Withdrawing permission cannot recall an already submitted operation.
+External idle checks are not atomic with concurrent human input.
 
-Real dispatch defaults OFF for every chat. Existing queue-only permission is
-insufficient. In **Восстановление после сжатия**, permit MCP requests AND use
-**Небезопасный реальный запуск: включить / выключить для чата…** to accept the
-explicit warning for that one chat. The same warning appears in selected-chat
-details and MCP tool descriptions. Without either permission, no real compact.
-It stays `deferred` if unsafe opt-in is missing. There is no silent global auto-enable.
-
-**Выбрать чаты…** opens a tree of local Codex projects with their member chats,
-followed by **Чаты вне проекта**. Clicking a project selects/deselects all its
-available members; individual chats can also be selected, including chats outside
-projects. A partial project selection has a distinct marker. Nothing is written
-until **ОК** and the explicit bulk-consent warning, including the same unsafe
-compaction risk, are confirmed. Cancel/closing the picker changes nothing.
-Chats without a nonblank title or an existing transcript file are omitted from
-the picker and its group counts. Protected chats with available metadata/files
-remain visible but disabled. Membership uses explicit
-Desktop assignments and native database project IDs;
-projectless/remote-host chats are excluded, and cwd alone is never membership.
-Legacy project aliases are resolved through Desktop's local migration map.
-It enables History, Memo, Notes,
-auto-restore, MCP requests and unsafe native compaction per chat. Existing notes,
-bookmarks, folders, thresholds and restoration limits are preserved. Archives
-are synchronized before enabling permissions; missing rollout files are skipped
-without creating empty registrations, with a summary count. Per-chat failures are reported and
-do not prevent other chats from connecting. A failed new chat may remain
-registered with its permissions off; retrying the button completes setup.
-The hook is checked/installed through the existing flow; Codex trust remains a
-separate requirement. The button does not compact, enqueue requests, change
-global limits or create per-chat MCP server attachments. Existing queued requests
-may dispatch on subsequent worker updates after consent. Future chats require
-another click. Remote-host and ChatGPT chats are not supported by the local store.
-Only selected IDs are connected; other existing registrations and archives remain
-unchanged. Already dispatched native compaction cannot be undone. Periodic/manual
-bulk refresh summarizes unavailable sources rather than listing every missing old
-rollout. Sources disappearing after selection are skipped during connection too.
-
-The worker waits for native completed originating turn and live idle, syncs
-archives/selected preservation, commits durable dispatch intent, then the native
-bridge rechecks the same current owner, originating completion and idle. The
-reference stream checks idle again before RPC. These checks REDUCE but DO NOT
-ELIMINATE the proven concurrent-input race. Never send a new message while
-relying on uninterrupted work during this unsafe external compaction.
-
-Native completion requires a new real GUID contextCompaction item, completed
-turn, same owner and idle. ACK alone is never completed. Known not-started checks
-return to waiting; timeout/malformed/ambiguous possible dispatch becomes terminal
-`ambiguous` with no automatic retry. Cancellation before dispatch and withdrawal
-of consent are rechecked at intent commit. Disabling consent cannot undo an
-already sent RPC. Crash/restart intent is ambiguous, never resent. An OS-held
-cooperating-worker lease prevents GUI/MCP processes dispatching concurrently and
-releases on process death. This does not lock the user's Desktop input.
-Normal MCP EOF and GUI close drain the current operation before exit to avoid
-stranding an archive lock. Forced termination/power loss may still require
-manual lock inspection; an already dispatched native operation is not undone.
-
-The bridge discovers/follows the existing Desktop owner and never resumes a
-second app-server owner. It uses private versioned IPC, which can break on app
-updates. Run the app or its MCP worker to process the durable queue. Selected
-document restoration still requires the separate optional hook/trust setup;
-enabling unsafe compact does not silently install hooks or prove delivery.
+**Выбрать чаты…** groups explicit local project memberships and projectless chats.
+Project and individual selections are supported. Only named chats with available
+plain/compressed transcripts are offered; protected entries are disabled.
+Connection preserves notes, bookmarks, folders, thresholds and restoration limits,
+synchronizes originals and leaves both compaction permissions off. Partial failures
+are reported per chat; canceling the picker changes nothing. A separate restoration
+hook/trust setup is still required. Connection never compacts, changes model limits
+or creates a per-chat compaction MCP attachment. Original sources remain read-only.
 
 ## Build and verification
 
@@ -295,8 +249,7 @@ enabling unsafe compact does not silently install hooks or prove delivery.
 venv with pinned PyInstaller 6.22.3 for the GUI and console hook/MCP EXEs.
 End users do not need Python or .NET installed. `python -B smoke.py` is only a narrow synthetic local
 smoke. Private review artifacts and real-chat logs are intentionally excluded
-from the public repository. Synthetic smoke checks do not prove concurrent-input
-safety; the known unsafe behavior described above remains a release limitation.
+from the public repository. Synthetic smoke does not establish atomicity of external native submission.
 
 ## Provenance and sources
 

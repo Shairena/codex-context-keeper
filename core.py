@@ -478,7 +478,7 @@ class Store:
                     progress(index, len(ids), title, 'Обновление архива', tid)
                 self.sync(tid)
                 self.update(tid, selected=dict.fromkeys(KEYS, True), auto_restore=True,
-                    allow_compaction=True, unsafe_native_compaction=True, context_warning_enabled=True)
+                    allow_compaction=False, unsafe_native_compaction=False, context_warning_enabled=True)
                 result['connected'].append(tid)
                 if progress:
                     progress(index, len(ids), title, 'Подключён', tid)

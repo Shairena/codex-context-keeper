@@ -22,7 +22,7 @@ def serve(store, bound_thread):
     worker_thread = threading.Thread(target=worker, daemon=False)
     worker_thread.start()
     tools = [
-        {'name': 'request_compaction_after_turn', 'description': 'Queue compaction AFTER your completed response and live idle. Does NOT compact inside this tool call. KNOWN UNSAFE: concurrent new input may be rejected or its active answer interrupted. Real dispatch requires separate per-chat user risk consent. Explicit origin turn ID required; fixed server binding is not authenticated caller metadata.',
+        {'name': 'request_compaction_after_turn', 'description': 'Queue a request now; execution waits for a completed originating turn and live idle. Does not compact inside this tool call. Requires per-chat request and external-launch permissions, both off by default. Explicit origin turn ID required; server binding is explicit, not authenticated caller metadata.',
          'inputSchema': {'type': 'object', 'properties': {'origin_turn_id': {'type': 'string'}}, 'required': ['origin_turn_id'], 'additionalProperties': False}},
         {'name': 'get_compaction_request', 'description': 'Read queued/deferred/completed/ambiguous status; ACK is not completion.',
          'inputSchema': {'type': 'object', 'properties': {'request_id': {'type': 'string'}}, 'required': ['request_id'], 'additionalProperties': False}},
@@ -38,8 +38,7 @@ def serve(store, bound_thread):
         raise ValueError('Неизвестный инструмент.')
     try:
         serve_stdio(tools, 'Bound to thread ' + bound + '. Identity is explicit, not authenticated by stdio metadata. '
-            'KNOWN UNSAFE native compaction only after completed origin, live idle and separate per-chat user risk consent. '
-            'Concurrent input can be rejected or its answer interrupted.', call)
+            'Compaction requires both per-chat permissions, a completed originating turn and live idle. Both permissions default off.', call)
     finally:
         stopped.set()
         # Graceful EOF drains current work instead of stranding an archive lock.

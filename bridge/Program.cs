@@ -100,7 +100,7 @@ try
     bool completed = after.OwnerId == before.OwnerId && after.Idle && fresh.Any(c=>c.ItemCompleted && c.TurnStatus=="completed" && c.Error is null);
     Emit(new { disposition=completed?"completed":"ambiguous", threadId=tid, after.OwnerId, beforeUsedTokens=before.UsedTokens,
         afterUsedTokens=after.UsedTokens, compactions=fresh, knownRaceUnsafe=true,
-        detail=completed?"New completed compaction item, completed turn and idle confirmed. Concurrent-input safety NOT guaranteed.":"Completion not established; automatic retry forbidden." });
+        detail=completed?"New completed compaction item, completed turn and idle confirmed.":"Completion not established; automatic retry forbidden." });
     return completed?0:1;
 }
 catch(Exception ex)

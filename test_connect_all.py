@@ -44,6 +44,7 @@ class ConnectAllTests(unittest.TestCase):
             store = Store(root / 'data', home)
             store.add(existing)
             store.update(existing, limit=9000, preparation_threshold=12345)
+            store.update(existing, allow_compaction=True, unsafe_native_compaction=True)
             project_members = store.projects()[project]['ids']
             catalog = store.connection_catalog()
             self.assertEqual(catalog['groups'][-1]['name'], 'Чаты вне проекта')
@@ -71,8 +72,9 @@ class ConnectAllTests(unittest.TestCase):
             self.assertFalse(rows[broken]['unsafe_native_compaction'])
             for tid in (existing, fresh):
                 self.assertEqual(rows[tid]['selected'], dict.fromkeys(KEYS, True))
-                for flag in ('auto_restore', 'allow_compaction', 'unsafe_native_compaction'):
-                    self.assertTrue(rows[tid][flag])
+                self.assertTrue(rows[tid]['auto_restore'])
+                for flag in ('allow_compaction', 'unsafe_native_compaction'):
+                    self.assertFalse(rows[tid][flag])
             self.assertEqual(store.folder(existing), folder)
             self.assertEqual((folder / 'memo.md').read_text(encoding='utf-8'), 'Keep memo')
             self.assertEqual((folder / 'notes.md').read_text(encoding='utf-8'), 'Keep notes')
@@ -119,7 +121,8 @@ class ConnectAllTests(unittest.TestCase):
         app = Mock(busy=False)
         with patch('gui.messagebox.askyesno', return_value=True) as ask, patch('gui.configured_hook', return_value=True):
             Application.connect_selected(app, ['one'])
-        self.assertIn('НЕБЕЗОПАСНОЕ', ask.call_args.args[1])
+        self.assertIn('Самосжатие и удалённое сжатие будут выключены', ask.call_args.args[1])
+        self.assertNotIn('НЕБЕЗОПАС', ask.call_args.args[1])
         app.install.assert_not_called()
         app.run.call_args.args[0]()
         app.store.connect_selected.assert_called_once_with(['one'], progress=app.report_progress)

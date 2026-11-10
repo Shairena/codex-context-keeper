@@ -7,7 +7,7 @@ are not a Debian runtime pass. No system upgrade or compaction is required.
 
 ## Install as the desktop user
 
-Download `ContextKeeper-0.3.7-linux-x64.tar.gz` from this repository's v0.3.7
+Download `ContextKeeper-0.3.8-linux-x64.tar.gz` from this repository's v0.3.8
 release, rather than GitHub's automatic source-code zip. Extract it in a writable
 working directory. The Linux archive includes Python source and a self-contained
 Linux native bridge; Python/Tkinter are supplied by Debian, not bundled.
@@ -44,13 +44,13 @@ verified display; `--verify-gui` runs an isolated temporary GUI smoke.
 
 ## Verify the active Codex chat
 
-The management server must advertise seven tools and version0.3.7. Reload its
+The management server must advertise seven tools and version0.3.8. Reload its
 MCP entry in the current client if necessary. Verify actual tool availability in
 the chat; standalone handshake success alone does not establish that binding.
 
 Connect only the explicitly selected chat ID. A connection enables the
-advertised per-chat switches, including reminders and the known-unsafe native
-compaction permission. Permission is not an instruction to compact. Do not
+preservation/reminder switches. Both compaction permissions remain off and
+require separate per-chat opt-in. Do not
 connect unrelated VM chats as an installation side effect.
 
 Call `get_context_status` for the selected registered ID and record whether the
