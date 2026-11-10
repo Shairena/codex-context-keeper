@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+from version import VERSION
 
 
 def main():
@@ -17,6 +18,7 @@ def main():
     target.mkdir(parents=True, exist_ok=True)
     python = Path(sys.base_prefix)
     pyinstaller = importlib.metadata.distribution('pyinstaller')
+    zstandard = importlib.metadata.distribution('zstandard')
     sources = {
         'PYTHON-LICENSE.txt': python / 'LICENSE.txt',
         'TCL-TK-LICENSE.txt': python / 'tcl' / 'tk8.6' / 'license.terms',
@@ -28,7 +30,10 @@ def main():
         if not source.is_file():
             raise RuntimeError('Required runtime notice missing: ' + name)
         shutil.copyfile(source, target / name)
-    manifest = {'version': '0.2.1', 'license': 'MIT for original application; noncommercial reference component', 'files': {}}
+    for source in zstandard.files:
+        if '.dist-info/licenses/' in str(source).replace('\\', '/'):
+            shutil.copyfile(zstandard.locate_file(source), target / ('ZSTANDARD-' + source.name))
+    manifest = {'version': VERSION, 'license': 'MIT for original application; noncommercial reference component', 'files': {}}
     for name in ('ContextKeeper.exe', 'ContextKeeperHook.exe', 'ContextKeeperBridge.exe'):
         path = args.dist / name
         manifest['files'][name] = {'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}

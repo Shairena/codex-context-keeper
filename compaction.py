@@ -1,44 +1,15 @@
 """Durable after-turn requests; native dispatch requires explicit known-risk consent."""
 from __future__ import annotations
 import json
-from pathlib import Path
 import uuid
-from contextlib import contextmanager
-import os
-from core import protected_threads, lock, now, read_json, thread_id, write_json
+from core import protected_threads, lock, now, read_json, thread_id, write_json, file_lease
 
 TERMINAL = {'completed', 'failed', 'cancelled', 'ambiguous'}
 
 
-@contextmanager
 def worker_lease(root):
     """OS-held cooperating-worker lock, automatically released on process death."""
-    path = Path(root) / '.compaction-worker.lock'
-    with path.open('a+b') as f:
-        if f.seek(0, 2) == 0:
-            f.write(b'0')
-            f.flush()
-        f.seek(0)
-        acquired = False
-        try:
-            if os.name == 'nt':
-                import msvcrt
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except OSError:
-            pass
-        try:
-            yield acquired
-        finally:
-            if acquired:
-                f.seek(0)
-                if os.name == 'nt':
-                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    return file_lease(root, '.compaction-worker.lock')
 
 
 class UnverifiedDesktopDriver:

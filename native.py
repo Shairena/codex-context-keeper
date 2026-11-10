@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import threading
 import time
+import sys
+from version import VERSION
 
 LIMIT_KEYS = ('model_context_window', 'model_auto_compact_token_limit')
 
@@ -16,6 +18,11 @@ def resolve_cli():
     explicit = os.environ.get('CODEX_CLI_PATH')
     if explicit and Path(explicit).is_file():
         return explicit
+    if sys.platform != 'win32':
+        path = shutil.which('codex')
+        if path:
+            return path
+        raise ValueError('Не найден Codex CLI. Установите codex или укажите CODEX_CLI_PATH.')
     root = Path(os.environ.get('LOCALAPPDATA', '')) / 'OpenAI' / 'Codex' / 'bin'
     candidates = list(root.glob('*/codex.exe')) if root.is_dir() else []
     if candidates:
@@ -76,7 +83,7 @@ class Rpc:
                     raise ValueError(f'Операция {name} отклонена Codex (код {code}); настройки не подтверждены.')
                 return result['result']
         try:
-            request(1, 'initialize', {'clientInfo': {'name': 'codex-context-keeper', 'title': 'Codex Context Keeper', 'version': '0.2.1'},
+            request(1, 'initialize', {'clientInfo': {'name': 'codex-context-keeper', 'title': 'Codex Context Keeper', 'version': VERSION},
                 'capabilities': {'experimentalApi': True}})
             process.stdin.write(json.dumps({'method': 'initialized', 'params': {}}) + '\n')
             process.stdin.flush()

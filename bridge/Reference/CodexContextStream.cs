@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.IO.Pipes;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -9,7 +8,8 @@ namespace Tools.Types;
 // Each operation owns one observer lease and releases it, including cancellation.
 internal sealed class CodexContextStream : IAsyncDisposable
 {
-    private readonly NamedPipeClientStream pipe;
+    private Stream? pipe;
+    private readonly string pipeName;
     private readonly string threadId;
     private string clientId = "initializing-client";
     private string ownerId = "";
@@ -21,7 +21,7 @@ internal sealed class CodexContextStream : IAsyncDisposable
     internal CodexContextStream(string threadId, string pipeName)
     {
         this.threadId = threadId;
-        pipe = new(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        this.pipeName = pipeName;
     }
 
     public async Task<CodexContextSnapshot> ReadAsync(CancellationToken token)
@@ -30,9 +30,9 @@ internal sealed class CodexContextStream : IAsyncDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
-            if (!pipe.IsConnected)
+            if (pipe is null)
             {
-                await pipe.ConnectAsync(timeout.Token);
+                pipe = await DesktopConnection.OpenAsync(pipeName, timeout.Token);
                 var initialized = await RequestAsync("initialize", new { clientType = "task-overseer" }, 0, null, timeout.Token);
                 clientId = initialized["result"]?["clientId"]?.GetValue<string>() ?? throw new InvalidOperationException("Desktop IPC did not initialize.");
                 var discovered = await RequestAsync("thread-owner-discovery", new { hostId = "local", conversationId = threadId }, 1, null, timeout.Token);
@@ -84,11 +84,12 @@ internal sealed class CodexContextStream : IAsyncDisposable
         { throw new TimeoutException("Desktop accepted compaction, but its completed item, completed turn and idle state were not confirmed before timeout."); }
     }
 
-    public async Task StartUserTurnAsync(string prompt, CancellationToken token)
+    public async Task<string?> StartUserTurnAsync(string prompt, CancellationToken token,
+        Func<CodexContextSnapshot, bool>? guard = null, Action? beforeSend = null)
     {
         if (string.IsNullOrWhiteSpace(prompt)) throw new ArgumentException("A user turn requires input text.", nameof(prompt));
         var before = await ReadAsync(token);
-        if (!before.Idle) throw new InvalidOperationException("The target chat is not idle; a user turn was not started.");
+        if (!before.Idle || guard?.Invoke(before) == false) return null;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         try
@@ -97,6 +98,7 @@ internal sealed class CodexContextStream : IAsyncDisposable
             // its own thread's turn/start. No delegation envelope, separate CLI or overrides.
             // Local start-turn requests use version 2 (no outer hostId), independently of
             // discovery/compact version 1 and the context snapshot's version 11.
+            beforeSend?.Invoke();
             var accepted = await RequestAsync("thread-follower-start-turn", new
             {
                 conversationId = threadId,
@@ -105,9 +107,10 @@ internal sealed class CodexContextStream : IAsyncDisposable
                     context = new { inheritThreadSettings = true }
                 }
             }, 2, ownerId, timeout.Token);
-            if (accepted["handledByClientId"]?.GetValue<string>() != ownerId ||
-                string.IsNullOrWhiteSpace(accepted["result"]?["result"]?["turn"]?["id"]?.GetValue<string>()))
+            var turnId = accepted["result"]?["result"]?["turn"]?["id"]?.GetValue<string>();
+            if (accepted["handledByClientId"]?.GetValue<string>() != ownerId || string.IsNullOrWhiteSpace(turnId))
                 throw new InvalidOperationException("Desktop did not confirm a user turn on the identified owner.");
+            return turnId;
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new TimeoutException("Native user-turn acceptance was not confirmed. Do not resend blindly."); }
@@ -209,12 +212,12 @@ internal sealed class CodexContextStream : IAsyncDisposable
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(message);
         var header = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(header, payload.Length);
-        await pipe.WriteAsync(header, token); await pipe.WriteAsync(payload, token); await pipe.FlushAsync(token);
+        await pipe!.WriteAsync(header, token); await pipe.WriteAsync(payload, token); await pipe.FlushAsync(token);
     }
 
     private async Task<JsonObject> ReadFrameAsync(CancellationToken token)
     {
-        var header = new byte[4]; await pipe.ReadExactlyAsync(header, token);
+        var header = new byte[4]; await pipe!.ReadExactlyAsync(header, token);
         var length = BinaryPrimitives.ReadInt32LittleEndian(header);
         if (length <= 0 || length > 268435456) throw new InvalidOperationException("Invalid Desktop IPC frame length.");
         var payload = new byte[length]; await pipe.ReadExactlyAsync(payload, token);
@@ -225,10 +228,10 @@ internal sealed class CodexContextStream : IAsyncDisposable
     {
         try
         {
-            if (pipe.IsConnected && ownerId.Length > 0)
+            if (pipe is not null && ownerId.Length > 0)
             { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1)); await FollowAsync(false, timeout.Token); }
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException) { }
-        finally { await pipe.DisposeAsync(); }
+        finally { if (pipe is not null) await pipe.DisposeAsync(); }
     }
 }

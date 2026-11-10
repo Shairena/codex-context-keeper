@@ -1,36 +1,83 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using Tools.Types;
 
 // This bridge is explicitly NOT atomic-safe against concurrent user input.
 var output = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 void Emit(object value) => Console.WriteLine(JsonSerializer.Serialize(value, output));
-if (args.Length < 3 || args[0] is not ("inspect" or "compact") || !Guid.TryParse(args[1], out _))
+if (args.Length < 3 || args[0] is not ("inspect" or "compact" or "observe" or "remind") || !Guid.TryParse(args[1], out _))
 { Emit(new { disposition="not_started", detail="Invalid bridge arguments." }); return 2; }
 var tid = args[1]; var origin = args[2]; var mode = args[0];
-try
+var home = Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+bool IsProtected()
 {
-    var home = Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
     var protectionFile = Path.Combine(home, "context-keeper-protected-threads.json");
     if (File.Exists(protectionFile))
     {
         var protectedIds = JsonSerializer.Deserialize<string[]>(File.ReadAllText(protectionFile)) ?? throw new FormatException();
         if (protectedIds.Any(id => !Guid.TryParse(id, out _))) throw new FormatException();
-        if (protectedIds.Any(id => Guid.Parse(id) == Guid.Parse(tid)))
-        { Emit(new { disposition="not_started", detail="Thread excluded by local protection settings." }); return 2; }
+        return protectedIds.Any(id => Guid.Parse(id) == Guid.Parse(tid));
     }
+    return false;
+}
+try
+{
+    if (IsProtected())
+    { Emit(new { disposition="not_started", detail="Thread excluded by local protection settings." }); return 2; }
 }
 catch
 { Emit(new { disposition="not_started", detail="Invalid local protection settings; operation stopped." }); return 2; }
 if (mode == "compact" && (args.Length != 5 || args[4] != "--accept-known-race"))
 { Emit(new { disposition="not_started", detail="Explicit risk flag and expected owner required." }); return 2; }
 bool mutationPossible = false;
-using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(mode == "inspect" ? 25 : 110));
+string ContextKey(CodexContextSnapshot snapshot) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+    snapshot.ContextWindow + "|" + string.Join("|", snapshot.Compactions.Where(c => c.ItemCompleted && c.TurnStatus == "completed")
+        .Select(c => c.ItemId).OrderBy(id => id, StringComparer.Ordinal)))));
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(mode == "observe" ? 3 : mode == "remind" ? 25 : mode == "inspect" ? 25 : 110));
 try
 {
     await using var stream = new CodexContextStream(tid);
     var before = await stream.ReadAsync(timeout.Token);
+    if (mode == "observe")
+    {
+        Emit(new { disposition="observed", threadId=tid, before.OwnerId, before.Idle, before.UsedTokens,
+            before.ContextWindow, remainingTokens=before.ContextWindow - before.UsedTokens,
+            contextKey=ContextKey(before), before.Revision });
+        return 0;
+    }
+    if (mode == "remind")
+    {
+        if (args.Length != 6 || !int.TryParse(args[3], out var percent) || percent is < 1 or > 100)
+        { Emit(new { disposition="not_started", detail="Invalid reminder threshold." }); return 2; }
+        bool Enabled()
+        {
+            try
+            {
+                if (IsProtected()) return false;
+                var registry = JsonNode.Parse(File.ReadAllText(Path.Combine(args[5], "registry.json")));
+                var row = registry?["chats"]?[tid];
+                return row?["context_warning_enabled"]?.GetValue<bool>() == true &&
+                    (row?["context_warning_percent"]?.GetValue<int>() ?? 90) == percent;
+            }
+            catch { return false; } // Missing/corrupt/revoked settings never authorize a message.
+        }
+        bool Allowed(CodexContextSnapshot current) => Enabled() && current.OwnerId == args[2] && current.Idle &&
+            current.UsedTokens is not null && current.ContextWindow is > 0 &&
+            (decimal)current.UsedTokens.Value * 100 >= (decimal)current.ContextWindow.Value * percent &&
+            ContextKey(current) == args[4];
+        if (!Allowed(before))
+        { Emit(new { disposition="not_started", detail="Owner/idle/context/threshold changed; no reminder sent." }); return 0; }
+        var prompt = $"Напоминание Context Keeper: по живой метрике Codex контекст этого чата достиг порога {percent}%. " +
+            "Перед будущим сжатием можно внести важные данные в памятку Keeper. Это уведомление, ответ не требуется. " +
+            "Не запускайте сжатие автоматически.";
+        var turnId = await stream.StartUserTurnAsync(prompt, timeout.Token, Allowed, () => mutationPossible = true);
+        Emit(new { disposition=turnId is null ? "not_started" : "accepted", threadId=tid, turnId,
+            detail=turnId is null ? "Final idle/threshold guard declined reminder." : "Reminder user turn accepted by Desktop owner." });
+        return 0;
+    }
     bool OriginCompleted()
     {
         var state = typeof(CodexContextStream).GetField("state", BindingFlags.Instance|BindingFlags.NonPublic)?.GetValue(stream) as JsonObject;

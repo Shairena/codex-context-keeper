@@ -1,4 +1,6 @@
 .buildenv/
+.venv/
+private-backups/
 build/
 dist/
 data/

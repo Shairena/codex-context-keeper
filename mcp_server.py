@@ -4,6 +4,7 @@ import sys
 import threading
 from compaction import CompactionQueue
 from core import thread_id
+from version import VERSION
 
 
 def serve(store, bound_thread):
@@ -27,6 +28,25 @@ def serve(store, bound_thread):
          'inputSchema': {'type': 'object', 'properties': {'request_id': {'type': 'string'}}, 'required': ['request_id'], 'additionalProperties': False}},
         {'name': 'cancel_compaction_request', 'description': 'Cancel this chat request before dispatch; cannot cancel ambiguous already-sent work.',
          'inputSchema': {'type': 'object', 'properties': {'request_id': {'type': 'string'}}, 'required': ['request_id'], 'additionalProperties': False}}]
+    def call(name, args):
+        if name == 'request_compaction_after_turn':
+            return queue.request(bound, args['origin_turn_id'], bound)
+        if name == 'get_compaction_request':
+            return queue.status(args['request_id'], bound)
+        if name == 'cancel_compaction_request':
+            return queue.cancel(args['request_id'], bound)
+        raise ValueError('Неизвестный инструмент.')
+    try:
+        serve_stdio(tools, 'Bound to thread ' + bound + '. Identity is explicit, not authenticated by stdio metadata. '
+            'KNOWN UNSAFE native compaction only after completed origin, live idle and separate per-chat user risk consent. '
+            'Concurrent input can be rejected or its answer interrupted.', call)
+    finally:
+        stopped.set()
+        # Graceful EOF drains current work instead of stranding an archive lock.
+        worker_thread.join()
+
+
+def serve_stdio(tools, instructions, call, *, name='codex-context-keeper'):
     sys.stdout.reconfigure(encoding='utf-8')
     try:
         for line in sys.stdin.buffer:
@@ -39,8 +59,8 @@ def serve(store, bound_thread):
                     continue
                 if method == 'initialize':
                     result = {'protocolVersion': '2024-11-05', 'capabilities': {'tools': {}},
-                        'serverInfo': {'name': 'codex-context-keeper', 'version': '0.2.1'},
-                        'instructions': 'Bound to thread ' + bound + '. Identity is explicit, not authenticated by stdio metadata. KNOWN UNSAFE native compaction only after completed origin, live idle and separate per-chat user risk consent. Concurrent input can be rejected or its answer interrupted.'}
+                        'serverInfo': {'name': name, 'version': VERSION},
+                        'instructions': instructions}
                 elif method == 'ping':
                     result = {}
                 elif method == 'tools/list':
@@ -49,14 +69,7 @@ def serve(store, bound_thread):
                     params = request.get('params', {})
                     args = params.get('arguments', {})
                     try:
-                        if params['name'] == 'request_compaction_after_turn':
-                            value = queue.request(bound, args['origin_turn_id'], bound)
-                        elif params['name'] == 'get_compaction_request':
-                            value = queue.status(args['request_id'], bound)
-                        elif params['name'] == 'cancel_compaction_request':
-                            value = queue.cancel(args['request_id'], bound)
-                        else:
-                            raise ValueError('Неизвестный инструмент.')
+                        value = call(params['name'], args)
                         result = {'content': [{'type': 'text', 'text': json.dumps(value, ensure_ascii=False)}], 'isError': False}
                     except Exception as exc:
                         result = {'content': [{'type': 'text', 'text': str(exc)}], 'isError': True}
@@ -67,7 +80,4 @@ def serve(store, bound_thread):
             except Exception:
                 print(json.dumps({'jsonrpc': '2.0', 'id': rid, 'error': {'code': -32600, 'message': 'Invalid request'}}), flush=True)
     finally:
-        stopped.set()
-        # Graceful EOF must drain the current bounded native/archive operation.
-        # A daemon exit here could strand core.lock despite a normal process exit.
-        worker_thread.join()
+        sys.stdout.flush()

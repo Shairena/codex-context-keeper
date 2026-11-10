@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $pythonExe)) {
     if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
 }
 if (-not $SkipInstall) {
-    & $pythonExe -m pip install 'pyinstaller==6.22.3'
+    & $pythonExe -m pip install 'pyinstaller==6.22.3' 'zstandard==0.25.0'
     if ($LASTEXITCODE -ne 0) { throw 'dependency installation failed' }
 }
 Push-Location $appRoot

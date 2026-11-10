@@ -1,2 +1,15 @@
+# Preserve the exact bytes of recorded live evidence and the reference license.
+review_artifacts/live_compaction/*.json -text
+review_artifacts/live_compaction/*.jsonl -text
+review_artifacts/live_compaction/*.txt -text
+review_artifacts/race_compaction/*.json -text
+review_artifacts/race_compaction/*.jsonl -text
+review_artifacts/race_compaction/*.txt -text
+review_artifacts/unsafe_optin/*.json -text
+review_artifacts/unsafe_optin/*.jsonl -text
+review_artifacts/unsafe_optin/*.txt -text
 bridge/Reference/*.cs -text
 bridge/REFERENCE-LICENSE.txt -text
+review_artifacts/self_request/*.json -text
+review_artifacts/self_request/*.jsonl -text
+review_artifacts/self_request/*.txt -text

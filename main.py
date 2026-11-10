@@ -4,21 +4,29 @@ import json
 import os
 from pathlib import Path
 import sys
+from version import VERSION
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--version', action='version', version=VERSION)
     parser.add_argument('--data', type=Path)
     parser.add_argument('--codex-home', type=Path)
     parser.add_argument('--keeper-hook', action='store_true')
     parser.add_argument('--mcp', action='store_true')
+    parser.add_argument('--mcp-management', action='store_true')
     parser.add_argument('--bound-thread')
     parser.add_argument('--smoke-ui', action='store_true')
     args = parser.parse_args()
+    if sum((args.mcp, args.mcp_management, args.keeper_hook)) > 1:
+        parser.error('Choose only one MCP or hook mode')
     base = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
     data = args.data or base / 'data'
     from core import Store
-    if args.mcp:
+    if args.mcp_management:
+        from management_mcp import serve_management
+        serve_management(Store(data, args.codex_home))
+    elif args.mcp:
         if not args.bound_thread:
             parser.error('--mcp requires --bound-thread (explicit identity binding)')
         from mcp_server import serve
