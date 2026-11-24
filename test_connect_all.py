@@ -103,7 +103,7 @@ class ConnectAllTests(unittest.TestCase):
             self.assertEqual(store.registry()['chats'], {})
 
     def test_gui_cancel_busy_and_hook_refusal_do_not_connect(self):
-        app = Mock(busy=False)
+        app = Mock(busy=False, source_error='')
         with patch('gui.messagebox.askyesno', return_value=False):
             Application.connect_selected(app, ['one'])
         app.run.assert_not_called()
@@ -118,7 +118,7 @@ class ConnectAllTests(unittest.TestCase):
         app.run.assert_not_called()
 
     def test_gui_confirmed_existing_hook_runs_only_bulk_registration(self):
-        app = Mock(busy=False)
+        app = Mock(busy=False, source_error='')
         with patch('gui.messagebox.askyesno', return_value=True) as ask, patch('gui.configured_hook', return_value=True):
             Application.connect_selected(app, ['one'])
         self.assertIn('Самосжатие и удалённое сжатие будут выключены', ask.call_args.args[1])

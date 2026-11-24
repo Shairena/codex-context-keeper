@@ -1,4 +1,25 @@
-# Public release 0.3.8 verification
+# Public release 0.3.10 verification
+
+The 0.3.10 UI/source-selection source passed44 checks (42 successful,2 Linux-only
+skips) and focused final lifecycle validation. Native960x680 footer rendering
+was inspected. The final Windows GUI/Hook pair passed five isolated source-home
+smokes, including saved/malformed preferences and explicit CLI precedence, with
+empty stderr and preserved synthetic registry/memo bytes. MCP initialization
+reports0.3.10/7 tools. Queued work source-binding checks used fake drivers only;
+no real compaction or user-data operations were used for acceptance. Linux
+runtime validation is not claimed. Earlier accepted evidence follows.
+
+## Earlier 0.3.9 startup evidence
+
+The 0.3.9 startup error boundary passed separate source and staged Windows binary
+checks with missing/corrupt and recovered synthetic Codex homes. Source recovery
+regressions passed3/3 and the corrected connect/recovery group7/7. Three GUI
+binary smokes exit0 and preserve synthetic registry/memo hashes; Hook/MCP
+initialization reports0.3.9. No real chat compaction was performed. Earlier
+release evidence below retains its original scope; installed deployment is
+recorded in the Agent repair plan rather than inferred from these staged checks.
+
+## Earlier 0.3.8 release evidence
 
 2026-11-10. Public source and Windows release contain no user chat archives,
 personal configuration, private acceptance reports or real-chat test logs.

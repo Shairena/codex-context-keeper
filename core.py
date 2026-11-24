@@ -258,6 +258,10 @@ def parse_source(raw, tid):
     return offset, messages, views, observations
 
 
+class TranscriptUnavailable(FileNotFoundError):
+    """The current Codex metadata does not point to an available transcript."""
+
+
 class Store:
     def __init__(self, root, home=None):
         self.root = Path(root).resolve()
@@ -557,6 +561,10 @@ class Store:
         if tid in protected_threads(self.home):
             raise ValueError('Защищённый чат.')
         info = metadata(self.home, tid)
+        source = transcript_path(info['source'])
+        if source is None:
+            raise TranscriptUnavailable('Исходная переписка не найдена или недоступна.')
+        info['source'] = str(source)
         with lock(self.root):
             registry = self.registry()
             row = registry['chats'][tid]

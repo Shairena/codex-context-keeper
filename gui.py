@@ -4,12 +4,13 @@ import json
 import os
 from pathlib import Path
 import queue
+import sqlite3
 import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-from core import KEYS, atomic, lock, read_json, write_json, transcript_path
+from core import KEYS, Store, TranscriptUnavailable, atomic, lock, read_json, write_json, transcript_path
 from native import ContextSettings, Rpc, parse_limit
 from hooks import command, configured_hook, install_hook, remove_hook, runtime_hook_status
 from context_warnings import ContextWarnings, load_warning_state, counter_text
@@ -81,7 +82,7 @@ class ChatPicker(tk.Toplevel):
 
 
 class Application(tk.Tk):
-    def __init__(self, store, smoke=False):
+    def __init__(self, store, smoke=False, source_config_error=''):
         super().__init__()
         self.store, self.smoke = store, smoke
         self.settings = None
@@ -92,6 +93,11 @@ class Application(tk.Tk):
         self.stop_dispatch = threading.Event()
         self.warning_refresh = threading.Event()
         self.warning_error = ''
+        self.source_error = ''
+        self.source_config_error = source_config_error
+        self.selecting_source = False
+        self.restart_home = None
+        self.monitor_thread = None
         self.last_counter_update = 0
         self.protocol('WM_DELETE_WINDOW', self.request_close)
         self.title('Хранитель контекста Codex — ' + VERSION)
@@ -105,8 +111,16 @@ class Application(tk.Tk):
         style.theme_use('vista' if 'vista' in style.theme_names() else 'clam')
         style.configure('Treeview', rowheight=30)
         self.status = tk.StringVar(value='Готово. Зарегистрированные чаты обновляются каждые 30 секунд, пока открыто приложение.')
+        self.source_info = tk.StringVar()
         self.build()
         self.refresh()
+        if self.source_config_error:
+            def disable_unknown_source(widget):
+                for child in widget.winfo_children():
+                    if isinstance(child, (ttk.Button, ttk.Checkbutton)) and child is not self.source_picker:
+                        child.state(['disabled'])
+                    disable_unknown_source(child)
+            disable_unknown_source(self)
         self.after(100, self.check_work)
         if smoke:
             self.after(700, self.destroy)
@@ -116,15 +130,19 @@ class Application(tk.Tk):
                 warnings = ContextWarnings(self.store, stop=self.stop_dispatch)
                 while not self.stop_dispatch.is_set():
                     try:
-                        warnings.tick()
+                        if not self.source_error and not self.selecting_source:
+                            warnings.tick()
                         self.warning_error = ''
                     except Exception as exc:
                         self.warning_error = str(exc)
                     self.warning_refresh.wait(30)
                     self.warning_refresh.clear()
-            threading.Thread(target=monitor, daemon=True).start()
+            self.monitor_thread = threading.Thread(target=monitor, daemon=True)
+            self.monitor_thread.start()
 
     def build(self):
+        footer = ttk.Frame(self)
+        footer.pack(side='bottom', fill='x')
         notebook = ttk.Notebook(self)
         notebook.pack(fill='both', expand=True, padx=12, pady=10)
         chats, context, integrations, live = (ttk.Frame(notebook, padding=12) for _ in range(4))
@@ -132,14 +150,28 @@ class Application(tk.Tk):
         notebook.add(context, text='Контекст Codex — общие настройки')
         notebook.add(live, text='Живой контекст и предупреждения')
         notebook.add(integrations, text='Восстановление после сжатия')
+        source = ttk.Frame(chats)
+        source.pack(fill='x', pady=(0, 8))
+        source_actions = ttk.Frame(source)
+        source_actions.pack(fill='x')
+        self.source_picker = ttk.Button(source_actions, text='Папка базы Codex…',
+            command=lambda: self.guard(self.choose_source, source_repair=True))
+        self.source_picker.pack(side='left')
+        ttk.Button(source_actions, text='Проверить базу', command=lambda: self.guard(self.refresh)).pack(side='left', padx=8)
+        self.source_label = ttk.Label(source, textvariable=self.source_info, anchor='w')
+        self.source_label.pack(fill='x')
+        self.source_label.bind('<Configure>', lambda event: self.source_label.configure(wraplength=max(1, event.width)))
         top = ttk.Frame(chats)
         top.pack(fill='x')
         ttk.Label(top, text='ID чата / codex://threads/…').pack(side='left')
         self.add_id = ttk.Entry(top, width=43)
         self.add_id.pack(side='left', padx=8)
-        ttk.Button(top, text='Добавить чат', command=self.add_chat).pack(side='left')
-        ttk.Button(top, text='Выбрать чаты…', command=lambda: self.guard(self.pick_chats)).pack(side='left', padx=8)
-        ttk.Button(top, text='Обновить архивы', command=self.sync_all).pack(side='left', padx=8)
+        self.source_buttons = []
+        for label, fn in [('Добавить чат', self.add_chat), ('Выбрать чаты…', lambda: self.guard(self.pick_chats)),
+                          ('Обновить архивы', self.sync_all)]:
+            button = ttk.Button(top, text=label, command=fn)
+            button.pack(side='left', padx=4)
+            self.source_buttons.append(button)
         self.tree = ttk.Treeview(chats, columns=('history', 'memo', 'notes', 'auto', 'status'), show='tree headings', height=7, selectmode='extended')
         self.tree.heading('#0', text='Проект / чат')
         self.tree.column('#0', width=255, minwidth=180)
@@ -263,15 +295,41 @@ class Application(tk.Tk):
         ttk.Label(integrations, text='Самосжатие и удалённый запуск по умолчанию выключены.\n'
             'Для выполнения нужны оба разрешения; включаются отдельно для выбранного чата.',
             wraplength=1010).pack(anchor='w')
-        activity = ttk.Frame(self)
+        activity = ttk.Frame(footer)
         activity.pack(fill='x', padx=12)
         self.progress = ttk.Progressbar(activity, mode='indeterminate', length=150)
         self.progress.pack(side='left', padx=(0, 10))
         self.elapsed = tk.StringVar(value='')
         ttk.Label(activity, textvariable=self.elapsed).pack(side='left')
-        ttk.Label(self, textvariable=self.status, wraplength=1090, padding=(12, 4)).pack(fill='x')
+        self.status_label = ttk.Label(footer, textvariable=self.status, padding=(12, 4), anchor='w')
+        self.status_label.pack(fill='x')
+        self.status_label.bind('<Configure>', lambda event: self.status_label.configure(wraplength=max(1, event.width - 24)))
 
-    def guard(self, fn):
+    def choose_source(self):
+        if self.busy or self.pending_native_read is not None:
+            self.status.set('Дождитесь завершения текущей операции перед сменой папки.')
+            return
+        self.selecting_source = True
+        try:
+            selected = filedialog.askdirectory(parent=self, title='Папка Codex со state_*.sqlite', initialdir=str(self.store.home))
+            if not selected:
+                return
+            home = Path(selected).resolve()
+            Store(self.store.root, home).projects()  # Validate read-only; never create a substitute database.
+            if not messagebox.askyesno('Сменить папку базы Codex',
+                    f'Перезапустить окно Keeper с папкой:\n{home}\n\n'
+                    'Архивы и список подключений сохранятся. Внешние настройки MCP и хуков не меняются автоматически.', parent=self):
+                return
+            write_json(self.store.root / 'gui-source.json', {'codex_home': str(home)})
+            self.restart_home = home
+            self.request_close()
+        finally:
+            self.selecting_source = False
+
+    def guard(self, fn, *, source_repair=False):
+        if self.source_config_error and not source_repair:
+            self.status.set('Сначала выберите папку базы Codex.')
+            return
         try:
             return fn()
         except Exception as exc:
@@ -289,6 +347,13 @@ class Application(tk.Tk):
             self.status.set('Закрытие после завершения текущей операции; уже отправленное сжатие не отменяется.')
         else:
             self.destroy()
+
+    def destroy(self):
+        self.stop_dispatch.set()
+        self.warning_refresh.set()
+        for pending in self.tk.call('after', 'info'):
+            self.after_cancel(pending)
+        super().destroy()
 
     def restore_window_size(self):
         path = self.store.root / 'window.json'
@@ -399,10 +464,25 @@ class Application(tk.Tk):
         selected = self.tree.selection()
         rows = self.store.registry()['chats']
         opened = {iid: bool(self.tree.item(iid, 'open')) for iid in self.tree.get_children()}
-        projects = self.store.projects()
-        parents = {tid: 'project:' + pid for pid, project in projects.items() for tid in project['ids']}
-        groups = sorted([('project:' + pid, project['name']) for pid, project in projects.items()], key=lambda x: x[1].casefold())
-        groups.append(('project:outside', 'Чаты вне проекта'))
+        try:
+            if self.source_config_error:
+                raise ValueError(self.source_config_error)
+            projects = self.store.projects()
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.source_error = str(error)
+            self.source_info.set(f'База Codex недоступна: {self.store.home}\n'
+                f'{error} Откройте Codex или укажите верную папку через --codex-home, затем нажмите «Проверить базу». '
+                'Архивы сохранены; синхронизация и автоматические напоминания приостановлены.')
+            parents = {tid: 'source:unavailable' for tid in rows}
+            groups = [('source:unavailable', 'Проект неизвестен — база Codex недоступна')]
+        else:
+            self.source_error = ''
+            self.source_info.set(f'База Codex доступна: {self.store.home}')
+            parents = {tid: 'project:' + pid for pid, project in projects.items() for tid in project['ids']}
+            groups = sorted([('project:' + pid, project['name']) for pid, project in projects.items()], key=lambda x: x[1].casefold())
+            groups.append(('project:outside', 'Без подтверждённого проекта'))
+        for button in self.source_buttons:
+            button.configure(state='disabled' if self.source_error else 'normal')
         self.tree.delete(*self.tree.get_children())
         for gid, title in groups:
             members = [tid for tid in rows if parents.get(tid, 'project:outside') == gid]
@@ -502,24 +582,36 @@ class Application(tk.Tk):
         self.guard(lambda: self.connect_selected([thread_id(value)]))
 
     def sync_all(self):
+        if self.source_error:
+            self.status.set('Синхронизация недоступна. Проверьте базу Codex.')
+            return
         def sync():
             errors = []
             unavailable = 0
+            processed = 0
             for tid, row in self.store.registry()['chats'].items():
-                if transcript_path(row.get('source')) is None:
-                    unavailable += 1
-                    continue
                 try:
                     self.store.sync(tid)
+                    processed += 1
+                except TranscriptUnavailable:
+                    unavailable += 1
                 except Exception as exc:
                     errors.append(tid + ': ' + str(exc))
             from compaction import CompactionQueue
             queue = CompactionQueue(self.store)
             queue.shutdown_event = self.stop_dispatch
             queue.tick()
-            return errors, unavailable
-        self.run(sync, lambda result: self.status.set(('; '.join(result[0]) if result[0] else 'Архивы обновлены.')
-            + f' Недоступных архивов пропущено: {result[1]}.'))
+            return processed, unavailable, errors
+        def done(result):
+            processed, unavailable, errors = result
+            failed = unavailable + len(errors)
+            text = (f'Не удалось обновить архивов: {failed}. Успешно обработано: {processed}. '
+                    f'Исходные переписки недоступны: {unavailable}; ошибок: {len(errors)}.' if failed else
+                    f'Архивы обработаны: {processed}.')
+            if errors:
+                text += ' Первая ошибка: ' + errors[0][:240] + ('…' if len(errors[0]) > 240 else '')
+            self.status.set(text)
+        self.run(sync, done)
 
     def pick_chats(self):
         if self.busy:
@@ -531,6 +623,9 @@ class Application(tk.Tk):
             self.connect_selected(picker.result)
 
     def connect_selected(self, ids):
+        if self.source_error:
+            self.status.set('Подключение недоступно. Проверьте базу Codex.')
+            return
         if self.busy:
             self.status.set('Дождитесь завершения текущей операции.')
             return
@@ -558,8 +653,10 @@ class Application(tk.Tk):
         self.run(lambda: self.store.connect_selected(ids, progress=self.report_progress), done)
 
     def periodic(self):
-        if not self.busy and self.store.registry()['chats']:
-            self.sync_all()
+        if not self.busy and not self.selecting_source:
+            self.refresh()
+            if not self.source_error and self.store.registry()['chats']:
+                self.sync_all()
         self.after(30000, self.periodic)
 
     def open_file(self, name):
@@ -673,6 +770,9 @@ class Application(tk.Tk):
         ttk.Button(window, text='Снять закладку по ID', command=unpin).pack(pady=6)
 
     def read_native(self):
+        if self.source_config_error:
+            self.status.set('Сначала выберите папку базы Codex.')
+            return
         if self.pending_close:
             return
         inputs = self.pending_native_read

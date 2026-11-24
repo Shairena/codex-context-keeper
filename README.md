@@ -12,9 +12,24 @@ MIT-only**. Preserve both license files and the runtime notices in `licenses/`.
 
 ## Run
 
-Version 0.3.8 keeps self-request and external-launch compaction permissions off
+Version 0.3.10 keeps self-request and external-launch compaction permissions off
 on every connection and uses neutral per-chat controls. Live counters, context
 reminders, compressed transcripts and memo restoration remain available.
+Missing/unreadable Codex databases leave the window open with an explicit source
+error and a retry button. Saved connections/archives remain visible without
+invented project membership; source-dependent sync/connect and automatic reminders
+pause until a successful retry. This never creates a substitute Codex database.
+Use **Папка базы Codex…** to select the Codex home containing `state_*.sqlite`.
+Keeper validates it read-only, saves the GUI default in `data/gui-source.json`
+and restarts its window with fresh source/native-settings state. Existing
+archives/connections remain; explicit `--codex-home` wins on each launch.
+External MCP and hook arguments are not silently rewritten by this GUI setting.
+Queued compaction requests are bound to their originating Codex home. Another
+home, or an older request without that binding, cannot dispatch automatically;
+use a new explicit request if needed. Folder selection does not grant permission.
+Archive synchronization reports processed and failed/unavailable counts;
+unavailable transcripts are not presented as successfully updated. Status text
+wraps to the actual window width in a reserved footer.
 Run `ContextKeeper.exe` from the extracted release (or `dist/ContextKeeper.exe`
 after a source build). Keep `ContextKeeperHook.exe` and
 `ContextKeeperBridge.exe` beside it, with `REFERENCE-LICENSE.txt`.

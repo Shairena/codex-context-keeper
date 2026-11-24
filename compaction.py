@@ -63,9 +63,12 @@ class CompactionQueue:
             state = self.load()
             for item in state['requests'].values():
                 if item['thread_id'] == tid and item['origin_turn_id'] == origin_turn_id:
+                    if item.get('codex_home') != str(self.store.home):
+                        raise ValueError('Предыдущий запрос не привязан к этой папке Codex. Используйте новый исходный turn.')
                     return dict(item, deduplicated=True)
             rid = str(uuid.uuid4())
             item = dict(request_id=rid, thread_id=tid, origin_turn_id=origin_turn_id, status='queued',
+                codex_home=str(self.store.home),
                 created=now(), updated=now(), detail='Ожидание завершения ответа. Ничего не сжато.',
                 known_race_unsafe=True,
                 identity_mode='explicit validated archive identity; stdio caller not authenticated')
@@ -178,6 +181,10 @@ class CompactionQueue:
             row = self.store.registry()['chats'].get(item['thread_id'])
             if not row or not row.get('allow_compaction'):
                 self._transition(rid, {'queued', 'deferred', 'waiting'}, status='cancelled', detail='Разрешение пользователя снято.')
+                continue
+            if item.get('codex_home') != str(self.store.home):
+                self._transition(rid, {'queued', 'deferred', 'waiting'}, status='deferred',
+                    detail='Источник запроса не совпадает с папкой Codex или не записан старой версией. Ничего не отправлено; нужен новый запрос.')
                 continue
             if getattr(self.driver, 'unsafe_driver', False):
                 if not row.get('unsafe_native_compaction'):

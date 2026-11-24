@@ -1,10 +1,28 @@
 from __future__ import annotations
 import argparse
+import gc
 import json
 import os
 from pathlib import Path
 import sys
 from version import VERSION
+
+
+def gui_home(data, explicit):
+    """GUI preference never overrides CLI source isolation or external bindings."""
+    if explicit is not None:
+        return explicit, ''
+    preference = Path(data) / 'gui-source.json'
+    if not preference.exists():
+        return None, ''
+    try:
+        document = json.loads(preference.read_text(encoding='utf-8-sig'))
+        value = document.get('codex_home')
+        if not isinstance(value, str) or not value.strip() or not Path(value).is_absolute():
+            raise ValueError('Требуется абсолютный путь к папке Codex.')
+        return Path(value), ''
+    except (OSError, ValueError, AttributeError) as error:
+        return None, f'Не удалось прочитать сохранённую папку ({preference}): {error}. Выберите папку заново.'
 
 
 def main():
@@ -47,8 +65,22 @@ def main():
         print(json.dumps(response, ensure_ascii=False))
     else:
         from gui import Application
-        app = Application(Store(data, args.codex_home), smoke=args.smoke_ui)
-        app.mainloop()
+        home, source_error = gui_home(data, args.codex_home)
+        while True:
+            app = Application(Store(data, home), smoke=args.smoke_ui, source_config_error=source_error)
+            app.mainloop()
+            if app.restart_home is None:
+                break
+            if app.monitor_thread is not None:
+                app.monitor_thread.join(timeout=40)
+                if app.monitor_thread.is_alive():
+                    from tkinter import messagebox
+                    messagebox.showerror('Папка пока не изменена', 'Предыдущий запрос ещё завершается. Перезапустите Keeper позднее.')
+                    break
+            home, source_error = app.restart_home, ''
+            # Release the old Tcl interpreter before constructing another Tk root.
+            app = None
+            gc.collect()
 
 
 if __name__ == '__main__':
